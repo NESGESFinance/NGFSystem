@@ -2,6 +2,19 @@
 
 Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); versionado [SemVer](https://semver.org/lang/es/).
 
+## [Sin publicar]
+
+### Corregido
+- Restaurada la estructura del repositorio (`src/ngfs/`, `src/ngfs/api/`, `tests/`, `docs/`); la subida web la había
+  aplanado y el paquete `ngfs` no podía importarse.
+- README sustituido por el de NGFSystem (el anterior describía otro proyecto).
+- Añadidos los archivos que faltaban: `pyproject.toml`, `LICENSE`, `NOTICE`, `.gitignore`, `.env.example`,
+  `Dockerfile`, `docker-compose.yml`, `docs/ci.yml.example` y `src/ngfs/__init__.py`.
+- Eliminado el ZIP duplicado del repositorio.
+
+### Cambiado
+- Nombre oficial unificado: **NGFSystem** (paquete de distribución `ngfsystem`; el módulo Python sigue siendo `ngfs`).
+
 ## [0.1.0] — 2026-11-16
 
 ### Añadido

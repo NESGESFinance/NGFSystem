@@ -40,7 +40,7 @@ def crear_admin(usuario: str, nombre: str, password: str) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="ngfs", description="Herramientas de administración de NGFSistem")
+    parser = argparse.ArgumentParser(prog="ngfs", description="Herramientas de administración de NGFSystem")
     sub = parser.add_subparsers(dest="comando", required=True)
     p = sub.add_parser("crear-admin", help="Crea un usuario con rol administrador")
     p.add_argument("--usuario", required=True)

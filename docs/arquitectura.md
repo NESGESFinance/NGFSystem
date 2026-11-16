@@ -1,6 +1,6 @@
 # Arquitectura — NGFS v0.1
 
-NGFSistem (NGFS) es la **capa central de gestión, trazabilidad y auditoría** del ecosistema NESGESFinance. Gestiona
+NGFSystem (NGFS) es la **capa central de gestión, trazabilidad y auditoría** del ecosistema NESGESFinance. Gestiona
 expedientes financieros a lo largo de un ciclo de vida de 8 etapas, con control de acceso por roles, decisiones
 humanas obligatorias y una bitácora verificable. UASI v5 es un **adaptador opcional y aislado** que solo aporta
 análisis consultivo.

@@ -1,4 +1,4 @@
-# Hoja de ruta de implementación — NGFSistem (7 fases)
+# Hoja de ruta de implementación — NGFSystem (7 fases)
 
 > Documento de planificación. Las fases posteriores a la 1 son **propuestas** y no están implementadas. Las fechas
 > se fijarán con el equipo de NESGESFinance.
