@@ -1,6 +1,7 @@
 # NGFSystem con PostgreSQL. Uso:
 #   cp .env.example .env   # y defina NGFS_JWT_SECRETO y POSTGRES_PASSWORD
 #   docker compose up --build
+#   (al arrancar, el contenedor ejecuta `ngfs migrar` antes de uvicorn)
 #   docker compose exec ngfs python -m ngfs.cli crear-admin --usuario admin   (con NGFS_ADMIN_PASSWORD en .env)
 services:
   db:

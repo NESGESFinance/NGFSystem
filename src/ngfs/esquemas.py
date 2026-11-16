@@ -15,6 +15,9 @@ class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"  # noqa: S105 - tipo de token OAuth2, no es un secreto
     expira_en_minutos: int
+    renovable_hasta: datetime | None = Field(
+        default=None, description="Límite absoluto de la sesión: después hay que volver a iniciar sesión.",
+    )
 
 
 class UsuarioCrear(BaseModel):
@@ -45,6 +48,9 @@ class ExpedienteEditar(BaseModel):
     descripcion: str | None = Field(default=None, max_length=10_000)
     monto_solicitado: Decimal | None = Field(default=None, ge=0, max_digits=20, decimal_places=2)
     moneda: str | None = Field(default=None, pattern=r"^[A-Z]{3,8}$")
+    version_esperada: int | None = Field(
+        default=None, ge=1, description="Concurrencia optimista: si se indica y no coincide con la versión actual → 409.",
+    )
 
 
 class ExpedienteSalida(BaseModel):
@@ -61,6 +67,7 @@ class ExpedienteSalida(BaseModel):
     solicitante_id: int
     creado_en: datetime
     actualizado_en: datetime
+    version: int
 
 
 class SolicitudTransicion(BaseModel):
@@ -69,6 +76,9 @@ class SolicitudTransicion(BaseModel):
     confirmacion_humana: bool = Field(
         default=False,
         description="Obligatorio en transiciones de decisión: confirma que una persona revisó y decide.",
+    )
+    version_esperada: int | None = Field(
+        default=None, ge=1, description="Concurrencia optimista: si se indica y no coincide con la versión actual → 409.",
     )
 
 

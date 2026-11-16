@@ -8,7 +8,8 @@ from typing import Annotated, Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.orm.attributes import set_committed_value
 
 from ngfs import rbac
 from ngfs.api.dependencias import CfgDep, ClaimsDep, SesionDep, UsuarioDep, cargar_expediente, exigir_global, obtener_uasi
@@ -38,7 +39,18 @@ def a_salida(exp: Expediente) -> ExpedienteSalida:
         id=exp.id, codigo=exp.codigo, titulo=exp.titulo, descripcion=exp.descripcion,
         monto_solicitado=exp.monto_solicitado, moneda=exp.moneda, estado=exp.estado, etapa=etapa,
         etapa_nombre=nombre, solicitante_id=exp.solicitante_id, creado_en=exp.creado_en, actualizado_en=exp.actualizado_en,
+        version=exp.version,
     )
+
+
+def comprobar_version(exp: Expediente, version_esperada: int | None) -> None:
+    """Concurrencia optimista explícita: el cliente indica la versión que leyó."""
+    if version_esperada is not None and version_esperada != exp.version:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"El expediente fue modificado por otra persona (versión actual {exp.version}, "
+            f"esperada {version_esperada}). Vuelva a consultarlo antes de continuar.",
+        )
 
 
 @router.post("/expedientes", response_model=ExpedienteSalida, status_code=201)
@@ -49,7 +61,11 @@ def crear_expediente(datos: ExpedienteCrear, usuario: UsuarioDep, sesion: Sesion
                      estado=Estado.BORRADOR.value, solicitante_id=usuario.id)
     sesion.add(exp)
     sesion.flush()
-    exp.codigo = f"NGFS-{datetime.now(UTC).year}-{exp.id:05d}"
+    # El código depende del id autogenerado. Se fija con un UPDATE directo para que la creación no cuente
+    # como modificación: el expediente nace con version = 1.
+    codigo = f"NGFS-{datetime.now(UTC).year}-{exp.id:05d}"
+    sesion.execute(update(Expediente).where(Expediente.id == exp.id).values(codigo=codigo))
+    set_committed_value(exp, "codigo", codigo)
     registrar_evento(sesion, actor=usuario, accion="expediente_creado", entidad_tipo="expediente", entidad_id=exp.id,
                      datos={"codigo": exp.codigo, "titulo": exp.titulo, "estado": exp.estado})
     sesion.commit()
@@ -76,7 +92,8 @@ def ver_expediente(expediente_id: int, usuario: UsuarioDep, sesion: SesionDep) -
 @router.patch("/expedientes/{expediente_id}", response_model=ExpedienteSalida)
 def editar_expediente(expediente_id: int, datos: ExpedienteEditar, usuario: UsuarioDep, sesion: SesionDep) -> ExpedienteSalida:
     exp = cargar_expediente(sesion, usuario, expediente_id, rbac.EDITAR)
-    cambios = datos.model_dump(exclude_unset=True, exclude_none=True)
+    comprobar_version(exp, datos.version_esperada)
+    cambios = datos.model_dump(exclude_unset=True, exclude_none=True, exclude={"version_esperada"})
     for campo, valor in cambios.items():
         setattr(exp, campo, valor)
     if cambios:
@@ -102,6 +119,7 @@ def ejecutar_transicion(
     expediente_id: int, solicitud: SolicitudTransicion, usuario: UsuarioDep, claims: ClaimsDep, sesion: SesionDep
 ) -> ExpedienteSalida:
     exp = cargar_expediente(sesion, usuario, expediente_id)
+    comprobar_version(exp, solicitud.version_esperada)
     estado_actual = Estado(exp.estado)
     try:
         t = buscar_transicion(estado_actual, solicitud.accion)

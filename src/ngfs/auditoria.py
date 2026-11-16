@@ -14,12 +14,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from ngfs.modelos import EventoAuditoria, Usuario
 
 GENESIS = "0" * 64
+CLAVE_BLOQUEO_PG = 0x4E474653  # "NGFS"
 
 
 def json_canonico(datos: Any) -> str:
@@ -53,7 +54,14 @@ def registrar_evento(
     entidad_id: str | int,
     datos: dict[str, Any] | None = None,
 ) -> EventoAuditoria:
-    """Añade un evento a la cadena. Se confirma junto con la transacción del llamador."""
+    """Añade un evento a la cadena. Se confirma junto con la transacción del llamador.
+
+    En PostgreSQL se toma un bloqueo consultivo de transacción para serializar la asignación de
+    ``secuencia`` entre peticiones concurrentes. En cualquier motor, la restricción UNIQUE de
+    ``secuencia`` impide que dos eventos compartan posición (la transacción perdedora falla).
+    """
+    if sesion.get_bind().dialect.name == "postgresql":
+        sesion.execute(text("SELECT pg_advisory_xact_lock(:clave)"), {"clave": CLAVE_BLOQUEO_PG})
     ultimo = sesion.execute(
         select(EventoAuditoria).order_by(EventoAuditoria.secuencia.desc()).limit(1)
     ).scalar_one_or_none()

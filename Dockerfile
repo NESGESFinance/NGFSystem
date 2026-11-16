@@ -13,10 +13,12 @@ RUN pip install ".[postgres]" \
     && mkdir -p /data && chown ngfs:ngfs /data
 
 USER ngfs
-ENV DATABASE_URL=sqlite:////data/ngfs.db
+ENV DATABASE_URL=sqlite:////data/ngfs.db \
+    NGFS_CREAR_TABLAS_AL_INICIAR=false
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/salud').status==200 else 1)"
 
-CMD ["uvicorn", "ngfs.main:app", "--host", "0.0.0.0", "--port", "8080"]
+# Aplica las migraciones pendientes (idempotente) y arranca el servidor
+CMD ["sh", "-c", "ngfs migrar && exec uvicorn ngfs.main:app --host 0.0.0.0 --port 8080"]

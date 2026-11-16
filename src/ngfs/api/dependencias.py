@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from ngfs import rbac
 from ngfs.config import Configuracion
 from ngfs.estados import Estado, Rol
-from ngfs.modelos import Expediente, Usuario
+from ngfs.modelos import Expediente, TokenRevocado, Usuario
 from ngfs.seguridad import decodificar_token
 from ngfs.uasi_adaptador import AdaptadorUASI
 
@@ -65,6 +65,8 @@ def usuario_actual(claims: ClaimsDep, sesion: SesionDep) -> Usuario:
         raise _no_autenticado("Usuario inexistente o desactivado.")
     if claims.get("rol") != usuario.rol:
         raise _no_autenticado("El rol del usuario cambió; inicie sesión de nuevo.")
+    if sesion.get(TokenRevocado, str(claims.get("jti", ""))) is not None:
+        raise _no_autenticado("El token fue revocado; inicie sesión de nuevo.")
     return usuario
 
 

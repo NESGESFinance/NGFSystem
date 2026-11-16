@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import uuid4
 
 import bcrypt
 import jwt
@@ -35,19 +37,43 @@ def verificar_password(password: str, password_hash: str) -> bool:
         return False
 
 
-def emitir_token(cfg: Configuracion, *, usuario_id: int, usuario: str, rol: str) -> str:
+@dataclass(frozen=True)
+class TokenEmitido:
+    token: str
+    jti: str
+    expira_en: datetime
+    sesion_hasta: datetime
+
+
+def emitir_token(
+    cfg: Configuracion, *, usuario_id: int, usuario: str, rol: str, inicio_sesion: datetime | None = None
+) -> TokenEmitido:
+    """Emite un token de acceso con identificador único (``jti``) para poder revocarlo.
+
+    ``ses`` guarda el inicio de la sesión original: las renovaciones lo conservan, de modo que una sesión
+    nunca dura más de ``jwt_horas_sesion_maxima`` aunque se renueve indefinidamente.
+    """
     ahora = datetime.now(UTC)
+    inicio = inicio_sesion or ahora
+    sesion_hasta = inicio + timedelta(hours=cfg.jwt_horas_sesion_maxima)
+    expira = min(ahora + timedelta(minutes=cfg.jwt_minutos_expiracion), sesion_hasta)
+    jti = uuid4().hex
     carga: dict[str, Any] = {
         "sub": str(usuario_id),
         "usr": usuario,
         "rol": rol,
         "tipo": "humano",  # NGFS solo emite tokens a personas; no existen tokens de servicio con permisos de decisión
+        "jti": jti,
+        "ses": int(inicio.timestamp()),
         "iat": ahora,
-        "exp": ahora + timedelta(minutes=cfg.jwt_minutos_expiracion),
+        "exp": expira,
     }
-    return jwt.encode(carga, cfg.jwt_secreto, algorithm=cfg.jwt_algoritmo)
+    token = jwt.encode(carga, cfg.jwt_secreto, algorithm=cfg.jwt_algoritmo)
+    return TokenEmitido(token=token, jti=jti, expira_en=expira, sesion_hasta=sesion_hasta)
 
 
 def decodificar_token(cfg: Configuracion, token: str) -> dict[str, Any]:
     """Lanza ``jwt.PyJWTError`` si el token es inválido o expiró."""
-    return jwt.decode(token, cfg.jwt_secreto, algorithms=[cfg.jwt_algoritmo], options={"require": ["exp", "sub"]})
+    return jwt.decode(
+        token, cfg.jwt_secreto, algorithms=[cfg.jwt_algoritmo], options={"require": ["exp", "sub", "jti", "ses"]}
+    )
