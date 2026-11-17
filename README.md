@@ -66,6 +66,17 @@ cp .env.example .env             # defina NGFS_JWT_SECRETO
 NGFS_ADMIN_PASSWORD='Una-Clave-Larga-2026!' python -m ngfs.cli crear-admin --usuario admin --nombre "Administración"
 ```
 
+### Base de datos y migraciones
+
+En desarrollo las tablas se crean al arrancar. En producción defina `NGFS_CREAR_TABLAS_AL_INICIAR=false` y aplique
+las migraciones Alembic incluidas en el paquete:
+
+```bash
+ngfs migrar            # hasta la última revisión
+ngfs migrar --sql      # solo muestra el SQL
+ngfs migrar --estampar # BD existente creada con create_all → marcarla como migrada
+```
+
 ### Ejecutar
 
 ```bash
@@ -113,6 +124,8 @@ curl -s localhost:8080/auditoria/verificar -H "Authorization: Bearer $TOKEN_AUDI
 | GET | `/salud` | Estado del servicio | público |
 | POST | `/auth/login` | Inicio de sesión (formulario OAuth2) → JWT | público |
 | GET | `/auth/yo` | Usuario autenticado | todos |
+| POST | `/auth/logout` | Revoca el token actual | todos |
+| POST | `/auth/renovar` | Rota el token (hasta la duración máxima de sesión) | todos |
 | POST / GET | `/usuarios` | Alta y listado de usuarios | administrador |
 | PATCH | `/usuarios/{id}` | Cambiar rol o activar/desactivar | administrador |
 | POST | `/expedientes` | Crear expediente (Borrador) | solicitante |
@@ -131,7 +144,7 @@ curl -s localhost:8080/auditoria/verificar -H "Authorization: Bearer $TOKEN_AUDI
 ## Calidad
 
 ```bash
-pytest        # 39 tests (cubren AC-01 a AC-15)
+pytest        # 55 tests (cubren AC-01 a AC-15 y la fase 3); +6 con NGFS_TEST_PG_URL contra PostgreSQL
 ruff check .
 mypy          # modo estricto sobre src/ngfs
 ```
@@ -139,12 +152,19 @@ mypy          # modo estricto sobre src/ngfs
 **Integración continua:** el workflow está en [`docs/ci.yml.example`](docs/ci.yml.example). Para activarlo, copie el
 archivo a `.github/workflows/ci.yml` y súbalo con una cuenta que tenga permiso de *workflows* en GitHub.
 
-## Limitaciones conocidas (v0.1)
+## Concurrencia optimista
 
-- La inmutabilidad de la bitácora se impone en la aplicación (ORM); un acceso directo a la base de datos podría
-  alterar filas, aunque la verificación lo detecta. El bloqueo a nivel de BD y el anclaje externo están planificados.
-- No hay migraciones (Alembic), interfaz web, decisiones colegiadas, almacenamiento cifrado de documentos ni
-  limitación de peticiones (rate limiting) más allá del bloqueo de cuentas.
+Cada expediente expone `version`. Envíe `version_esperada` en `PATCH /expedientes/{id}` o en
+`POST /expedientes/{id}/transiciones`: si otra persona lo modificó entretanto, la respuesta es `409` y debe volver a
+consultarlo. Sin `version_esperada`, el ORM sigue detectando escrituras simultáneas reales (también `409`).
+
+## Limitaciones conocidas (v0.2)
+
+- Los triggers impiden modificar la bitácora con SQL normal, pero un usuario con privilegios DDL (propietario de la
+  tabla o superusuario) podría eliminarlos; la verificación lo seguiría **detectando**. En producción, la aplicación
+  debe conectarse con un rol sin privilegios DDL. El anclaje externo está planificado (fase 6).
+- La limitación de peticiones es en memoria por proceso: con varios workers/réplicas aplíquela también en el proxy.
+- No hay interfaz web, decisiones colegiadas ni almacenamiento cifrado de documentos.
 - El contrato de API con UASI v5 para análisis de expedientes aún no está definido; el adaptador está listo pero
   desactivado.
 

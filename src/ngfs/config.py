@@ -20,7 +20,20 @@ class Configuracion(BaseSettings):
 
     jwt_secreto: str = SECRETO_DESARROLLO
     jwt_algoritmo: str = "HS256"
-    jwt_minutos_expiracion: int = Field(default=60, ge=1, le=1440)
+    jwt_minutos_expiracion: int = Field(default=30, ge=1, le=1440)
+    jwt_horas_sesion_maxima: int = Field(default=12, ge=1, le=168, description="Límite absoluto aunque se renueve el token")
+
+    # Base de datos: en desarrollo/pruebas las tablas se crean al arrancar; en producción use `ngfs migrar` (Alembic).
+    crear_tablas_al_iniciar: bool = True
+
+    # Limitación de peticiones por IP (ventana deslizante de 60 s, en memoria del proceso). 0 = desactivado.
+    limite_peticiones_minuto: int = Field(default=120, ge=0)
+    limite_login_minuto: int = Field(default=10, ge=0)
+    confiar_x_forwarded_for: bool = Field(default=False, description="Activar solo detrás de un proxy inverso de confianza")
+
+    # Registro estructurado (JSON por línea)
+    log_nivel: str = "INFO"
+    log_json: bool = True
 
     max_intentos_login: int = Field(default=5, ge=1)
     minutos_bloqueo: int = Field(default=15, ge=1)

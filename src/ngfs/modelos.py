@@ -43,6 +43,11 @@ class Expediente(Base):
     solicitante_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id"), index=True)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=ahora)
     actualizado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=ahora, onupdate=ahora)
+    # Control de concurrencia optimista: SQLAlchemy incrementa la versión en cada UPDATE y, si otra
+    # transacción ya la cambió, el UPDATE no afecta filas y se lanza StaleDataError (→ HTTP 409).
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+
+    __mapper_args__ = {"version_id_col": version}
 
 
 class HistorialTransicion(Base):
@@ -104,6 +109,57 @@ class EventoAuditoria(Base):
     datos: Mapped[str] = mapped_column(Text)  # JSON canónico
     hash_anterior: Mapped[str] = mapped_column(String(64))
     hash: Mapped[str] = mapped_column(String(64), unique=True)
+
+
+class TokenRevocado(Base):
+    """Identificadores (jti) de tokens revocados por cierre de sesión o renovación."""
+
+    __tablename__ = "tokens_revocados"
+
+    jti: Mapped[str] = mapped_column(String(64), primary_key=True)
+    usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id"), index=True)
+    expira_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    revocado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=ahora)
+
+
+# ---------------------------------------------------------------------------
+# Inmutabilidad de la bitácora a nivel de base de datos (además del ORM).
+# Los triggers impiden UPDATE/DELETE incluso con SQL directo. Se crean tanto con
+# ``create_all`` (desarrollo/pruebas) como en la migración Alembic inicial.
+# ---------------------------------------------------------------------------
+MENSAJE_INMUTABLE = "NGFS: la bitacora de auditoria es inmutable"
+
+DDL_SQLITE = [
+    f"""CREATE TRIGGER IF NOT EXISTS ngfs_auditoria_no_update BEFORE UPDATE ON eventos_auditoria
+        BEGIN SELECT RAISE(ABORT, '{MENSAJE_INMUTABLE}'); END""",
+    f"""CREATE TRIGGER IF NOT EXISTS ngfs_auditoria_no_delete BEFORE DELETE ON eventos_auditoria
+        BEGIN SELECT RAISE(ABORT, '{MENSAJE_INMUTABLE}'); END""",
+]
+
+DDL_POSTGRESQL = [
+    f"""CREATE OR REPLACE FUNCTION ngfs_bloquear_auditoria() RETURNS trigger AS $$
+        BEGIN RAISE EXCEPTION '{MENSAJE_INMUTABLE}'; END; $$ LANGUAGE plpgsql""",
+    "DROP TRIGGER IF EXISTS ngfs_auditoria_inmutable ON eventos_auditoria",
+    """CREATE TRIGGER ngfs_auditoria_inmutable BEFORE UPDATE OR DELETE ON eventos_auditoria
+        FOR EACH ROW EXECUTE FUNCTION ngfs_bloquear_auditoria()""",
+    "DROP TRIGGER IF EXISTS ngfs_auditoria_no_truncate ON eventos_auditoria",
+    """CREATE TRIGGER ngfs_auditoria_no_truncate BEFORE TRUNCATE ON eventos_auditoria
+        FOR EACH STATEMENT EXECUTE FUNCTION ngfs_bloquear_auditoria()""",
+]
+
+
+def sentencias_inmutabilidad(dialecto: str) -> list[str]:
+    if dialecto == "sqlite":
+        return DDL_SQLITE
+    if dialecto == "postgresql":
+        return DDL_POSTGRESQL
+    return []
+
+
+@event.listens_for(EventoAuditoria.__table__, "after_create")
+def _crear_triggers(_tabla: Any, conexion: Any, **_kw: Any) -> None:
+    for sentencia in sentencias_inmutabilidad(conexion.dialect.name):
+        conexion.exec_driver_sql(sentencia)
 
 
 class BitacoraInmutableError(Exception):
