@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from datetime import UTC, datetime
 from typing import Annotated, Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, status
 from sqlalchemy import select, update
 from sqlalchemy.orm.attributes import set_committed_value
 
 from ngfs import rbac
 from ngfs.api.dependencias import CfgDep, ClaimsDep, SesionDep, UsuarioDep, cargar_expediente, exigir_global, obtener_uasi
 from ngfs.auditoria import registrar_evento
+from ngfs.config import Configuracion
+from ngfs.crypto.documentos import DocumentoCifradoError, cifrar_documento, descifrar_documento, identificador_clave
 from ngfs.esquemas import (
     AnalisisSalida,
     DocumentoSalida,
@@ -28,9 +31,11 @@ from ngfs.esquemas import (
 from ngfs.estados import ETAPAS, Estado, Rol, TransicionInvalida, buscar_transicion, transiciones_desde
 from ngfs.modelos import AnalisisConsultivo, Documento, Expediente, HistorialTransicion
 from ngfs.uasi_adaptador import AdaptadorUASI
+from ngfs.votaciones import votacion_abierta
 
 router = APIRouter(tags=["expedientes"])
 _TROZO = 1024 * 1024
+log = logging.getLogger("ngfs.documentos")
 
 
 def a_salida(exp: Expediente) -> ExpedienteSalida:
@@ -120,6 +125,11 @@ def ejecutar_transicion(
 ) -> ExpedienteSalida:
     exp = cargar_expediente(sesion, usuario, expediente_id)
     comprobar_version(exp, solicitud.version_esperada)
+    abierta = votacion_abierta(sesion, exp.id)
+    if abierta is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            f"El expediente tiene una votación colegiada abierta (#{abierta.id}); la decisión se "
+                            "tomará por quórum o tras cerrarla.")
     estado_actual = Estado(exp.estado)
     try:
         t = buscar_transicion(estado_actual, solicitud.accion)
@@ -156,30 +166,86 @@ def historial(expediente_id: int, usuario: UsuarioDep, sesion: SesionDep) -> lis
     return list(sesion.execute(consulta).scalars())
 
 
-def _hash_archivo(archivo: UploadFile, limite_bytes: int) -> tuple[str, int]:
+def _leer_archivo(archivo: UploadFile, limite_bytes: int) -> tuple[bytes, str]:
+    """Lee el archivo por trozos respetando el límite y devuelve (contenido original, SHA-256 del original)."""
     h = hashlib.sha256()
+    trozos: list[bytes] = []
     total = 0
     while trozo := archivo.file.read(_TROZO):
         total += len(trozo)
         if total > limite_bytes:
             raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, "El documento supera el tamaño máximo permitido.")
         h.update(trozo)
-    return h.hexdigest(), total
+        trozos.append(trozo)
+    return b"".join(trozos), h.hexdigest()
+
+
+def _hash_archivo(archivo: UploadFile, limite_bytes: int) -> tuple[str, int]:
+    contenido, sha = _leer_archivo(archivo, limite_bytes)
+    return sha, len(contenido)
+
+
+def _proteger(contenido: bytes, cfg: Configuracion) -> tuple[bytes, bool, str | None]:
+    """Cifrado transparente en reposo. Sin clave configurada se guarda en claro (retrocompatibilidad) con aviso."""
+    if not cfg.doc_encryption_key:
+        log.warning("NGFS_DOC_ENCRYPTION_KEY no configurada: el documento se almacena SIN cifrar.")
+        return contenido, False, None
+    return cifrar_documento(contenido, cfg.doc_encryption_key), True, identificador_clave(cfg.doc_encryption_key)
 
 
 @router.post("/expedientes/{expediente_id}/documentos", response_model=DocumentoSalida, status_code=201)
 def adjuntar_documento(expediente_id: int, archivo: UploadFile, usuario: UsuarioDep, sesion: SesionDep, cfg: CfgDep) -> Documento:
     exp = cargar_expediente(sesion, usuario, expediente_id, rbac.ADJUNTAR)
-    sha, tamano = _hash_archivo(archivo, cfg.max_tamano_documento_mb * 1024 * 1024)
+    original, sha = _leer_archivo(archivo, cfg.max_tamano_documento_mb * 1024 * 1024)  # huella sobre el ORIGINAL
+    almacenado, cifrado, clave_id = _proteger(original, cfg)
     doc = Documento(expediente_id=exp.id, nombre=(archivo.filename or "sin_nombre")[:255],
-                    tipo_mime=(archivo.content_type or "application/octet-stream")[:128], tamano_bytes=tamano,
-                    sha256=sha, subido_por_id=usuario.id, etapa=exp.estado)
+                    tipo_mime=(archivo.content_type or "application/octet-stream")[:128], tamano_bytes=len(original),
+                    sha256=sha, subido_por_id=usuario.id, etapa=exp.estado, contenido=almacenado, cifrado=cifrado,
+                    clave_doc_id=clave_id)
     sesion.add(doc)
     sesion.flush()
     registrar_evento(sesion, actor=usuario, accion="documento_registrado", entidad_tipo="documento", entidad_id=doc.id,
-                     datos={"expediente_id": exp.id, "nombre": doc.nombre, "sha256": sha, "tamano_bytes": tamano})
+                     datos={"expediente_id": exp.id, "nombre": doc.nombre, "sha256": sha, "tamano_bytes": len(original),
+                            "cifrado": cifrado, "clave_doc_id": clave_id})
     sesion.commit()
     return doc
+
+
+@router.get("/documentos/{documento_id}/contenido", response_class=Response,
+            responses={200: {"content": {"application/octet-stream": {}}, "description": "Contenido original"}})
+def descargar_documento(documento_id: int, usuario: UsuarioDep, sesion: SesionDep, cfg: CfgDep) -> Response:
+    """Devuelve el contenido ORIGINAL (descifrado si procede) tras comprobar su huella SHA-256."""
+    doc = sesion.get(Documento, documento_id)
+    if doc is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Documento no encontrado.")
+    cargar_expediente(sesion, usuario, doc.expediente_id)
+    if doc.contenido is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND,
+                            "Este documento se registró solo por su huella SHA-256 (v0.1/v0.2): no hay contenido almacenado.")
+    contenido = doc.contenido
+    if doc.cifrado:
+        if not cfg.doc_encryption_key:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                                "El documento está cifrado y no hay clave de descifrado configurada.")
+        if doc.clave_doc_id and doc.clave_doc_id != identificador_clave(cfg.doc_encryption_key):
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                                "El documento se cifró con otra clave (rotación pendiente): no se puede descifrar.")
+        try:
+            contenido = descifrar_documento(contenido, cfg.doc_encryption_key)
+        except DocumentoCifradoError as exc:
+            log.error("Fallo al descifrar el documento %s: %s", doc.id, exc)
+            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                "No se pudo descifrar el documento: contenido alterado o clave incorrecta.") from exc
+    if hashlib.sha256(contenido).hexdigest() != doc.sha256:
+        log.error("La huella SHA-256 del documento %s no coincide con la registrada.", doc.id)
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            "Integridad comprometida: el contenido no coincide con la huella SHA-256 registrada.")
+    registrar_evento(sesion, actor=usuario, accion="documento_descargado", entidad_tipo="documento", entidad_id=doc.id,
+                     datos={"expediente_id": doc.expediente_id, "sha256": doc.sha256, "cifrado": doc.cifrado})
+    sesion.commit()
+    nombre_seguro = "".join(c if c.isalnum() or c in "._-" else "_" for c in doc.nombre) or "documento"
+    return Response(content=contenido, media_type=doc.tipo_mime,
+                    headers={"Content-Disposition": f'attachment; filename="{nombre_seguro}"', "X-NGFS-SHA256": doc.sha256})
 
 
 @router.get("/expedientes/{expediente_id}/documentos", response_model=list[DocumentoSalida])

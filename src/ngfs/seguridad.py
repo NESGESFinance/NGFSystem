@@ -1,4 +1,4 @@
-"""Contraseñas (bcrypt) y tokens de acceso (JWT)."""
+"""Contraseñas (bcrypt) y tokens de acceso (JWT HS256 o RS256)."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import bcrypt
 import jwt
 
 from ngfs.config import Configuracion
+from ngfs.crypto.claves_jwt import material_jwt
 
 
 class PasswordDebil(ValueError):
@@ -68,12 +69,15 @@ def emitir_token(
         "iat": ahora,
         "exp": expira,
     }
-    token = jwt.encode(carga, cfg.jwt_secreto, algorithm=cfg.jwt_algoritmo)
+    material = material_jwt(cfg)  # RS256 si hay claves RSA configuradas; HS256 en caso contrario
+    cabeceras = {"kid": material.kid} if material.kid else None
+    token = jwt.encode(carga, material.clave_firma, algorithm=material.algoritmo, headers=cabeceras)
     return TokenEmitido(token=token, jti=jti, expira_en=expira, sesion_hasta=sesion_hasta)
 
 
 def decodificar_token(cfg: Configuracion, token: str) -> dict[str, Any]:
-    """Lanza ``jwt.PyJWTError`` si el token es inválido o expiró."""
+    """Lanza ``jwt.PyJWTError`` si el token es inválido o expiró. Solo se acepta el algoritmo configurado."""
+    material = material_jwt(cfg)
     return jwt.decode(
-        token, cfg.jwt_secreto, algorithms=[cfg.jwt_algoritmo], options={"require": ["exp", "sub", "jti", "ses"]}
+        token, material.clave_verificacion, algorithms=[material.algoritmo], options={"require": ["exp", "sub", "jti", "ses"]}
     )

@@ -18,6 +18,10 @@ htmlcov/
 .env.*
 !.env.example
 
+# Claves locales (JWT RS256, etc.)
+*.pem
+claves/
+
 # Datos locales
 *.db
 *.sqlite

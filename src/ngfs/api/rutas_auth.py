@@ -14,6 +14,7 @@ from sqlalchemy import delete, select
 from ngfs import rbac
 from ngfs.api.dependencias import CfgDep, ClaimsDep, SesionDep, UsuarioDep, como_utc, exigir_global
 from ngfs.auditoria import registrar_evento
+from ngfs.crypto.claves_jwt import jwks
 from ngfs.esquemas import Token, UsuarioCrear, UsuarioSalida
 from ngfs.estados import Rol
 from ngfs.modelos import TokenRevocado, Usuario
@@ -74,6 +75,12 @@ def _revocar(sesion: SesionDep, claims: dict[str, Any], usuario: Usuario) -> Non
     sesion.execute(delete(TokenRevocado).where(TokenRevocado.expira_en < ahora))
     sesion.add(TokenRevocado(jti=str(claims["jti"]), usuario_id=usuario.id,
                              expira_en=datetime.fromtimestamp(int(claims["exp"]), UTC)))
+
+
+@router.get("/auth/jwks", tags=["autenticación"])
+def obtener_jwks(cfg: CfgDep) -> dict[str, list[dict[str, str]]]:
+    """JSON Web Key Set con la clave pública RS256 para verificación externa (vacío si se usa HS256)."""
+    return jwks(cfg)
 
 
 @router.get("/auth/yo", response_model=UsuarioSalida, tags=["autenticación"])

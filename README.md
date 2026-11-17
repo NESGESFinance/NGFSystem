@@ -126,6 +126,7 @@ curl -s localhost:8080/auditoria/verificar -H "Authorization: Bearer $TOKEN_AUDI
 | GET | `/auth/yo` | Usuario autenticado | todos |
 | POST | `/auth/logout` | Revoca el token actual | todos |
 | POST | `/auth/renovar` | Rota el token (hasta la duración máxima de sesión) | todos |
+| GET | `/auth/jwks` | JSON Web Key Set con la clave pública RS256 (vacío con HS256) | público |
 | POST / GET | `/usuarios` | Alta y listado de usuarios | administrador |
 | PATCH | `/usuarios/{id}` | Cambiar rol o activar/desactivar | administrador |
 | POST | `/expedientes` | Crear expediente (Borrador) | solicitante |
@@ -136,6 +137,11 @@ curl -s localhost:8080/auditoria/verificar -H "Authorization: Bearer $TOKEN_AUDI
 | GET | `/expedientes/{id}/historial` | Historial de transiciones | según visibilidad |
 | POST / GET | `/expedientes/{id}/documentos` | Registrar (multipart `archivo`) / listar documentos | según matriz |
 | POST | `/documentos/{id}/verificar` | Comparar un archivo con la huella registrada | según visibilidad |
+| GET | `/documentos/{id}/contenido` | Descargar el contenido original (descifrado y verificado por SHA-256) | según visibilidad |
+| POST / GET | `/expedientes/{id}/votaciones` | Abrir / listar votaciones colegiadas (aprobar o rechazar) | abrir: analista, cumplimiento, comité, administrador |
+| GET | `/votaciones/{id}` | Estado, conteo y votos con `verified` (firma HMAC) | según visibilidad |
+| POST | `/votaciones/{id}/votar` | Emitir voto firmado (FAVOR / CONTRA / ABSTENCION) | comité, administrador |
+| POST | `/votaciones/{id}/cerrar` | Cierre manual de una votación abierta (queda RECHAZADA) | administrador |
 | POST / GET | `/expedientes/{id}/analisis-uasi` | Solicitar / listar análisis consultivos UASI | analista, cumplimiento (según etapa) |
 | GET | `/auditoria` | Eventos de la bitácora (paginado) | auditor, cumplimiento, administrador |
 | GET | `/auditoria/verificar` | Verificación de integridad de la cadena | auditor, cumplimiento, administrador |
@@ -144,7 +150,7 @@ curl -s localhost:8080/auditoria/verificar -H "Authorization: Bearer $TOKEN_AUDI
 ## Calidad
 
 ```bash
-pytest        # 55 tests (cubren AC-01 a AC-15 y la fase 3); +6 con NGFS_TEST_PG_URL contra PostgreSQL
+pytest        # 73 tests (cubren AC-01 a AC-19, fases 3 y 4); +6 con NGFS_TEST_PG_URL contra PostgreSQL
 ruff check .
 mypy          # modo estricto sobre src/ngfs
 ```
@@ -158,13 +164,30 @@ Cada expediente expone `version`. Envíe `version_esperada` en `PATCH /expedient
 `POST /expedientes/{id}/transiciones`: si otra persona lo modificó entretanto, la respuesta es `409` y debe volver a
 consultarlo. Sin `version_esperada`, el ORM sigue detectando escrituras simultáneas reales (también `409`).
 
-## Limitaciones conocidas (v0.2)
+## Decisiones colegiadas, firmas y cifrado (v0.3-dev)
+
+- **Quórum:** `POST /expedientes/{id}/votaciones` con `{"transicion_objetivo": "aprobar", "quorum_requerido": 2}`.
+  Cuando los votos `FAVOR` alcanzan el quórum, la transición se ejecuta sola y se registra `VOTACION_APROBADA` en la
+  bitácora con los votantes y la huella de cada voto. Las abstenciones no cuentan; si los votos `CONTRA` alcanzan el
+  quórum la votación queda `RECHAZADA`; vencido el plazo queda `EXPIRADA`. Un usuario solo vota una vez (`409`).
+- **Firma de votos:** HMAC-SHA256 con `NGFS_FIRMA_KEY` (o derivada de `NGFS_JWT_SECRETO`); `GET /votaciones/{id}`
+  indica `verified` por voto, de modo que una alteración directa en la base de datos se detecta.
+- **Cifrado en reposo:** con `NGFS_DOC_ENCRYPTION_KEY` (genérela con
+  `python -c "from ngfs.crypto.documentos import generar_clave_documento as g; print(g())"`) el contenido se guarda
+  cifrado con Fernet (AES-128-CBC + HMAC-SHA256, clave de 256 bits). La huella SHA-256 se calcula sobre el original.
+- **RS256:** defina `NGFS_JWT_PRIVATE_KEY_PATH` y `NGFS_JWT_PUBLIC_KEY_PATH`; el par RSA-2048 se genera al arrancar si no
+  existe y la clave pública se publica en `GET /auth/jwks`.
+
+## Limitaciones conocidas (v0.3-dev)
 
 - Los triggers impiden modificar la bitácora con SQL normal, pero un usuario con privilegios DDL (propietario de la
   tabla o superusuario) podría eliminarlos; la verificación lo seguiría **detectando**. En producción, la aplicación
   debe conectarse con un rol sin privilegios DDL. El anclaje externo está planificado (fase 6).
 - La limitación de peticiones es en memoria por proceso: con varios workers/réplicas aplíquela también en el proxy.
-- No hay interfaz web, decisiones colegiadas ni almacenamiento cifrado de documentos.
+- No hay interfaz web ni notificaciones. Sin `NGFS_DOC_ENCRYPTION_KEY` los documentos nuevos se guardan **en claro**
+  en la base de datos (aviso en el registro); configúrela en cualquier entorno con datos reales.
+- La rotación de claves de documentos aún no está automatizada (`clave_doc_id` la prepara); la firma HMAC de votos
+  es un sello de integridad del servidor, no una firma electrónica cualificada del votante.
 - El contrato de API con UASI v5 para análisis de expedientes aún no está definido; el adaptador está listo pero
   desactivado.
 

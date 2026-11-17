@@ -4,6 +4,31 @@ Formato basado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/); v
 
 ## [Sin publicar]
 
+## [0.3.0-dev] — 2026-11-16 · Fase 4: decisiones colegiadas, firma de votos y cifrado de documentos
+
+### Añadido
+- **Decisiones colegiadas con quórum** (AC-16): modelos `VotacionDecision` y `VotoIndividual`; endpoints
+  `POST /expedientes/{id}/votaciones`, `GET /expedientes/{id}/votaciones`, `GET /votaciones/{id}`,
+  `POST /votaciones/{id}/votar` y `POST /votaciones/{id}/cerrar`. Al alcanzar el quórum de votos `FAVOR` la
+  transición se ejecuta automáticamente y se registra `VOTACION_APROBADA` (votantes + huella de cada voto). Nuevas
+  acciones RBAC globales `abrir_votacion`, `votar` y `cerrar_votacion`.
+- **Firma HMAC-SHA256 de votos** (AC-17): módulo `ngfs.crypto.firmas` (`firmar_voto`, `verificar_voto`), clave
+  `NGFS_FIRMA_KEY`; `verified` por voto en la consulta de la votación.
+- **Cifrado de documentos en reposo** (AC-18): módulo `ngfs.crypto.documentos` (`cifrar_documento`,
+  `descifrar_documento`, `generar_clave_documento`) con Fernet; clave `NGFS_DOC_ENCRYPTION_KEY`; nuevas columnas
+  `contenido`, `cifrado` y `clave_doc_id`; nuevo endpoint `GET /documentos/{id}/contenido` (descifra y verifica la huella).
+- **JWT RS256 + JWKS** (AC-19): módulo `ngfs.crypto.claves_jwt`; `NGFS_JWT_PRIVATE_KEY_PATH` /
+  `NGFS_JWT_PUBLIC_KEY_PATH` (par RSA-2048 generado al arrancar si no existe); endpoint público `GET /auth/jwks`.
+- Migraciones Alembic `0002_votaciones_colegiadas` y `0003_cifrado_documentos`.
+- 18 tests nuevos (`test_votaciones.py`, `test_cifrado_documentos.py`, `test_jwks.py`): 73 en total con SQLite.
+
+### Cambiado
+- Mientras un expediente tenga una votación abierta, las transiciones directas devuelven `409`.
+- Desde esta versión el contenido de los documentos nuevos se conserva en la base de datos (cifrado si hay clave;
+  en claro con advertencia si no). Los documentos anteriores siguen registrados solo por huella.
+- Con RS256 activo, los tokens HS256 emitidos antes dejan de ser válidos (hay que volver a iniciar sesión).
+- Nueva dependencia: `cryptography>=42.0`. Versión del paquete: `0.3.0.dev0`.
+
 ## [0.2.0] — 2026-11-16 · Fase 3: endurecimiento técnico
 
 ### Añadido
