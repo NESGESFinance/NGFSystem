@@ -51,12 +51,19 @@ CREAR_EXPEDIENTE = "crear_expediente"
 VER_AUDITORIA = "ver_auditoria"
 VERIFICAR_AUDITORIA = "verificar_auditoria"
 GESTIONAR_USUARIOS = "gestionar_usuarios"
+# Decisiones colegiadas (Fase 4)
+ABRIR_VOTACION = "abrir_votacion"
+VOTAR = "votar"
+CERRAR_VOTACION = "cerrar_votacion"
 
 ACCIONES_GLOBALES: dict[str, frozenset[Rol]] = {
     CREAR_EXPEDIENTE: frozenset({Rol.SOLICITANTE}),
     VER_AUDITORIA: frozenset({Rol.AUDITOR, Rol.CUMPLIMIENTO, Rol.ADMINISTRADOR}),
     VERIFICAR_AUDITORIA: frozenset({Rol.AUDITOR, Rol.CUMPLIMIENTO, Rol.ADMINISTRADOR}),
     GESTIONAR_USUARIOS: frozenset({Rol.ADMINISTRADOR}),
+    ABRIR_VOTACION: frozenset({Rol.ANALISTA, Rol.CUMPLIMIENTO, Rol.COMITE, Rol.ADMINISTRADOR}),
+    VOTAR: frozenset({Rol.COMITE, Rol.ADMINISTRADOR}),
+    CERRAR_VOTACION: frozenset({Rol.ADMINISTRADOR}),
 }
 
 
