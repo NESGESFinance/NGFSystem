@@ -1,4 +1,4 @@
-# Cómo contribuir a NGFSistem
+# Cómo contribuir a NGFSystem
 
 Gracias por su interés. NGFS es la capa de gestión y auditoría de NESGESFinance, por lo que priorizamos la
 **seguridad, la trazabilidad y la claridad** sobre la velocidad.

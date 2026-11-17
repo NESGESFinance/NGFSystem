@@ -1,6 +1,6 @@
 # Arquitectura — NGFS v0.1
 
-NGFSistem (NGFS) es la **capa central de gestión, trazabilidad y auditoría** del ecosistema NESGESFinance. Gestiona
+NGFSystem (NGFS) es la **capa central de gestión, trazabilidad y auditoría** del ecosistema NESGESFinance. Gestiona
 expedientes financieros a lo largo de un ciclo de vida de 8 etapas, con control de acceso por roles, decisiones
 humanas obligatorias y una bitácora verificable. UASI v5 es un **adaptador opcional y aislado** que solo aporta
 análisis consultivo.
@@ -33,7 +33,9 @@ flowchart LR
 | `ngfs.auditoria` | Registro encadenado de eventos y verificación de integridad. |
 | `ngfs.uasi_adaptador` | Cliente HTTP defensivo hacia UASI v5; sin acceso a BD ni a la máquina de estados. |
 | `ngfs.api.*` | Rutas HTTP y dependencias (autenticación, visibilidad, permisos). |
-| `ngfs.cli` | `crear-admin` para el usuario administrador inicial. |
+| `ngfs.cli` | `crear-admin` para el usuario administrador inicial y `migrar` (Alembic). |
+| `ngfs.middleware` | `X-Request-ID`, registro JSON por petición y limitación de peticiones por IP. |
+| `ngfs.migraciones` | Entorno y revisiones Alembic (empaquetados con el módulo). |
 
 ## Bitácora encadenada
 
@@ -41,11 +43,15 @@ Cada evento guarda: `secuencia`, `marca_tiempo` (UTC ISO-8601), `actor`, `accion
 `datos` (JSON canónico), `hash_anterior` y `hash = SHA-256(JSON canónico de todos los campos anteriores)`. El primer
 evento enlaza con `GENESIS` (64 ceros). La verificación recorre la cadena y comprueba secuencia, enlace y hash.
 
-**Límites conocidos (v0.1):** la inmutabilidad se aplica en la capa ORM; un administrador de base de datos con acceso
-directo podría alterar filas, pero la verificación lo **detectaría**. Para impedirlo (no solo detectarlo) se planifican
-permisos/triggers de BD y anclaje externo de la raíz (fases 3 y 6). El cálculo de la secuencia asume escrituras
-serializadas; con alta concurrencia la restricción `UNIQUE(secuencia)` hace fallar la transacción en conflicto en lugar
-de romper la cadena.
+**Inmutabilidad (v0.2):** se impone en dos capas: el ORM rechaza modificar/borrar eventos y la base de datos lo impide
+con triggers (`ngfs_auditoria_no_update`/`_no_delete` en SQLite; `ngfs_auditoria_inmutable` y
+`ngfs_auditoria_no_truncate` en PostgreSQL), creados tanto por `create_all` como por la migración `0001`. Solo un rol
+con privilegios DDL podría quitarlos, y la verificación seguiría **detectando** la manipulación; el anclaje externo
+de la raíz se planifica en la fase 6.
+
+**Concurrencia:** en PostgreSQL cada inserción toma `pg_advisory_xact_lock` antes de leer el último evento, de modo
+que las escrituras simultáneas se encadenan en orden (probado con 40 escrituras en 8 hilos). En SQLite las escrituras
+ya están serializadas por el motor; en cualquier caso `UNIQUE(secuencia)` impide bifurcar la cadena.
 
 ## Documentos
 

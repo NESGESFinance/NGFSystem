@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 
 from conftest import Entorno, cfg_pruebas
 from ngfs.auditoria import GENESIS
@@ -38,21 +39,44 @@ def test_ac12_verificacion_detecta_manipulacion(env: Entorno) -> None:
     env.transicion(exp_id, "sol", "enviar")
     r = env.cliente.get("/auditoria/verificar", headers=env.h("aud")).json()
     assert r["integra"] is True and r["eventos_verificados"] >= 3
-    # Manipulación directa en la base de datos (saltándose el ORM)
+    # Atacante con privilegios DDL: elimina los triggers y manipula la tabla con SQL directo.
     with env.sesion() as s:
+        _quitar_triggers(s)
         s.execute(text("UPDATE eventos_auditoria SET datos = '{\"hacia\":\"aprobado\"}' WHERE accion = 'transicion'"))
         s.commit()
     r = env.cliente.get("/auditoria/verificar", headers=env.h("aud")).json()
     assert r["integra"] is False and r["primer_error_secuencia"] is not None
 
 
+def _quitar_triggers(s: Any) -> None:
+    s.execute(text("DROP TRIGGER ngfs_auditoria_no_update"))
+    s.execute(text("DROP TRIGGER ngfs_auditoria_no_delete"))
+
+
 def test_ac12_verificacion_detecta_borrado(env: Entorno) -> None:
     env.crear_expediente()
     env.h("aud")
     with env.sesion() as s:
+        _quitar_triggers(s)
         s.execute(text("DELETE FROM eventos_auditoria WHERE secuencia = 2"))
         s.commit()
     assert env.cliente.get("/auditoria/verificar", headers=env.h("aud")).json()["integra"] is False
+
+
+@pytest.mark.parametrize("sentencia", [
+    "UPDATE eventos_auditoria SET accion = 'alterado'",
+    "DELETE FROM eventos_auditoria WHERE secuencia = 1",
+])
+def test_ac13_bitacora_inmutable_a_nivel_bd(env: Entorno, sentencia: str) -> None:
+    """Fase 3: incluso con SQL directo (sin ORM) la base de datos rechaza modificar o borrar eventos."""
+    env.crear_expediente()
+    with env.sesion() as s:
+        antes = s.execute(text("SELECT count(*), group_concat(hash) FROM eventos_auditoria")).one()
+        with pytest.raises(DBAPIError, match="inmutable"):
+            s.execute(text(sentencia))
+        s.rollback()
+        assert s.execute(text("SELECT count(*), group_concat(hash) FROM eventos_auditoria")).one() == antes
+    assert env.cliente.get("/auditoria/verificar", headers=env.h("aud")).json()["integra"] is True
 
 
 def test_ac12_permisos_de_auditoria(env: Entorno) -> None:

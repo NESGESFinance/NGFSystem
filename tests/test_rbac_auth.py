@@ -74,7 +74,8 @@ def test_ac09_autenticacion_obligatoria_y_tokens(env: Entorno) -> None:
     assert env.login("no_existe").status_code == 401
     falso = jwt.encode({"sub": "1", "rol": "administrador", "exp": 9999999999}, "otro-secreto-" * 4, algorithm="HS256")
     assert env.cliente.get("/auth/yo", headers={"Authorization": f"Bearer {falso}"}).status_code == 401
-    expirado = jwt.encode({"sub": "1", "rol": "solicitante", "exp": 1}, "x" * 40, algorithm="HS256")
+    expirado = jwt.encode({"sub": "1", "rol": "solicitante", "jti": "a" * 32, "ses": 1, "exp": 1}, "x" * 40,
+                          algorithm="HS256")
     r = env.cliente.get("/auth/yo", headers={"Authorization": f"Bearer {expirado}"})
     assert r.status_code == 401 and "expirado" in r.json()["detail"]
     assert env.cliente.get("/auth/yo", headers=env.h("sol")).json()["rol"] == "solicitante"

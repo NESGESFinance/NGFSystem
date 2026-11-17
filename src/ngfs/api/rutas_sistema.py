@@ -19,7 +19,7 @@ router = APIRouter()
 
 @router.get("/salud", tags=["sistema"])
 def salud(request: Request) -> dict[str, Any]:
-    return {"estado": "ok", "servicio": "NGFSistem", "version": __version__,
+    return {"estado": "ok", "servicio": "NGFSystem", "version": __version__,
             "uasi_habilitado": request.app.state.uasi.habilitado}
 
 
