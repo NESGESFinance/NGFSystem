@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ngfsystem"
-version = "0.2.0"
+version = "0.3.0.dev0"
 description = "NGFSystem (NGFS): capa de gestión, trazabilidad y auditoría del ecosistema NESGESFinance · Tokenización con Propósito"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -21,6 +21,7 @@ dependencies = [
     "python-multipart>=0.0.9",
     "httpx>=0.27",
     "alembic>=1.13",
+    "cryptography>=42.0",
 ]
 
 [project.optional-dependencies]

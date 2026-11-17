@@ -28,9 +28,9 @@ def test_docs_sincronizadas_con_codigo() -> None:
     assert rbac.matriz_markdown() in (RAIZ / "docs" / "rbac.md").read_text(encoding="utf-8")
 
 
-def test_criterios_ac01_a_ac15_documentados() -> None:
+def test_criterios_ac01_a_ac19_documentados() -> None:
     texto = (RAIZ / "docs" / "criterios_aceptacion.md").read_text(encoding="utf-8")
-    for i in range(1, 16):
+    for i in range(1, 20):
         assert f"AC-{i:02d}" in texto
 
 

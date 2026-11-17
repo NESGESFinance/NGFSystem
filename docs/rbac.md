@@ -34,6 +34,9 @@ Acciones de etapa: `ver`, `editar`, `adjuntar_documento`, `consultar_uasi` y las
 | ver_auditoria | administrador, auditor, cumplimiento |
 | verificar_auditoria | administrador, auditor, cumplimiento |
 | gestionar_usuarios | administrador |
+| abrir_votacion | administrador, analista, comite, cumplimiento |
+| votar | administrador, comite |
+| cerrar_votacion | administrador |
 
 ## Reglas complementarias
 
@@ -43,4 +46,7 @@ Acciones de etapa: `ver`, `editar`, `adjuntar_documento`, `consultar_uasi` y las
 - **Segregación de funciones:** nadie puede decidir un expediente que presentó (relevante si un usuario cambia de rol).
 - **Cambio de rol o desactivación:** invalida inmediatamente los tokens emitidos (`401`); hay que iniciar sesión de nuevo.
 - **Administrador:** no puede modificar su propio rol/estado (evita autoescalada o bloqueo accidental).
+- **Decisiones colegiadas (v0.3):** abren votación analista, cumplimiento, comité o administrador; votan comité y
+  administrador (nunca el solicitante del expediente); solo el administrador puede cerrar manualmente una votación
+  abierta. Mientras haya una votación abierta, el expediente no admite transiciones directas (`409`).
 - Respuestas: `401` sin autenticación válida, `403` acción no permitida, `404` recurso no visible.

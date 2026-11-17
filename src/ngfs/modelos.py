@@ -6,7 +6,20 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, event
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    event,
+    false,
+)
 from sqlalchemy.orm import Mapped, Mapper, mapped_column
 
 from ngfs.db import Base
@@ -65,7 +78,12 @@ class HistorialTransicion(Base):
 
 
 class Documento(Base):
-    """Documento adjunto registrado por su huella SHA-256 (el contenido no se almacena)."""
+    """Documento adjunto registrado por su huella SHA-256 calculada sobre el contenido ORIGINAL.
+
+    Desde v0.3 el contenido se conserva en ``contenido``: cifrado con Fernet si hay ``NGFS_DOC_ENCRYPTION_KEY``
+    (``cifrado=True``, ``clave_doc_id`` = huella de la clave) o en claro en caso contrario. Los documentos de
+    v0.1/v0.2 solo tienen la huella (``contenido`` nulo).
+    """
 
     __tablename__ = "documentos"
 
@@ -78,6 +96,45 @@ class Documento(Base):
     subido_por_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id"))
     etapa: Mapped[str] = mapped_column(String(32))
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=ahora)
+    contenido: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True, deferred=True)
+    cifrado: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    clave_doc_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class VotacionDecision(Base):
+    """Votación colegiada sobre una transición de decisión de un expediente (Fase 4)."""
+
+    __tablename__ = "votaciones_decision"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    expediente_id: Mapped[int] = mapped_column(ForeignKey("expedientes.id"), index=True)
+    transicion_objetivo: Mapped[str] = mapped_column(String(64))
+    iniciador_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id"))
+    estado_votacion: Mapped[str] = mapped_column(String(16), index=True)  # ABIERTA | APROBADA | RECHAZADA | EXPIRADA
+    quorum_requerido: Mapped[int] = mapped_column(Integer, default=2)
+    fecha_apertura: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=ahora)
+    fecha_cierre_previsto: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    fecha_cierre_real: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    justificacion_cierre: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Concurrencia optimista: evita que un voto y un cierre simultáneos cierren la votación dos veces.
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+
+    __mapper_args__ = {"version_id_col": version}
+
+
+class VotoIndividual(Base):
+    """Voto de un miembro con firma HMAC-SHA256. Un usuario solo puede votar una vez por votación."""
+
+    __tablename__ = "votos_individuales"
+    __table_args__ = (UniqueConstraint("votacion_id", "votante_id", name="uq_voto_votacion_votante"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    votacion_id: Mapped[int] = mapped_column(ForeignKey("votaciones_decision.id"), index=True)
+    votante_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id"))
+    decision: Mapped[str] = mapped_column(String(16))  # FAVOR | CONTRA | ABSTENCION
+    justificacion: Mapped[str] = mapped_column(Text)
+    timestamp_voto: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=ahora)
+    firma_voto: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class AnalisisConsultivo(Base):

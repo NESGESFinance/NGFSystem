@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -113,6 +114,7 @@ class DocumentoSalida(BaseModel):
     subido_por_id: int
     etapa: str
     creado_en: datetime
+    cifrado: bool = False
 
 
 class VerificacionDocumento(BaseModel):
@@ -151,3 +153,64 @@ class AnalisisSalida(BaseModel):
     disponible: bool
     resultado: dict[str, Any]
     creado_en: datetime
+
+
+# --------------------------------------------------------------------------- decisiones colegiadas (Fase 4)
+class EstadoVotacion(StrEnum):
+    ABIERTA = "ABIERTA"
+    APROBADA = "APROBADA"
+    RECHAZADA = "RECHAZADA"
+    EXPIRADA = "EXPIRADA"
+
+
+class DecisionVoto(StrEnum):
+    FAVOR = "FAVOR"
+    CONTRA = "CONTRA"
+    ABSTENCION = "ABSTENCION"
+
+
+class VotacionCrear(BaseModel):
+    transicion_objetivo: str = Field(min_length=1, max_length=64, description="Acción de decisión: aprobar | rechazar")
+    quorum_requerido: int = Field(default=2, ge=2, le=50, description="Votos FAVOR necesarios para ejecutar la transición")
+    duracion_horas: int = Field(default=72, ge=1, le=720, description="Plazo hasta fecha_cierre_previsto")
+
+
+class VotoEmitir(BaseModel):
+    decision: DecisionVoto
+    justificacion: str = Field(min_length=10, max_length=5_000)
+    confirmacion_humana: bool = Field(default=False, description="Obligatorio: confirma que una persona emite el voto.")
+
+
+class VotacionCerrar(BaseModel):
+    justificacion: str = Field(min_length=10, max_length=5_000)
+
+
+class VotoSalida(BaseModel):
+    id: int
+    votante_id: int
+    decision: str
+    justificacion: str
+    timestamp_voto: datetime
+    firma_voto: str | None
+    verified: bool = Field(description="True si la firma HMAC-SHA256 del voto es válida con la clave actual")
+
+
+class ConteoVotos(BaseModel):
+    favor: int
+    contra: int
+    abstencion: int
+
+
+class VotacionSalida(BaseModel):
+    id: int
+    expediente_id: int
+    transicion_objetivo: str
+    iniciador_id: int
+    estado_votacion: str
+    quorum_requerido: int
+    fecha_apertura: datetime
+    fecha_cierre_previsto: datetime
+    fecha_cierre_real: datetime | None
+    justificacion_cierre: str | None
+    conteo: ConteoVotos
+    votos: list[VotoSalida]
